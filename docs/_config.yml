@@ -1,0 +1,13 @@
+title: instagram-publisher
+description: A small service that posts images you already host to Instagram, over HTTP.
+theme: just-the-docs
+url: https://javadebadi.github.io
+baseurl: /instagram-publisher
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: false
+aux_links:
+  "View on GitHub": "https://github.com/javadebadi/instagram-publisher"
+exclude: [Gemfile, Gemfile.lock, vendor]

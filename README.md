@@ -126,3 +126,9 @@ internal/imagecheck/       is a URL a fetchable JPEG
 ```
 
 Tests run against a fake Instagram; none of them touch the real API.
+
+## Documentation
+
+A step-by-step tutorial, from a first dry run to deploying and refreshing
+tokens, is at https://javadebadi.github.io/instagram-publisher/ (source in
+`docs/`).
