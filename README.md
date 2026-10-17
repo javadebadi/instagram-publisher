@@ -60,6 +60,22 @@ fetchable 422. A failure of Instagram or of the secret store answers 502 with
 retry) and `"outcome_unknown": true` when the post may have gone out although
 Instagram did not answer: **do not retry before looking at the account.**
 
+### From Go: package `client`
+
+```go
+import "github.com/javadebadi/instagram-publisher/client"
+
+c := &client.Client{BaseURL: "http://localhost:8080",
+    TokenRef: "gcp:projects/P/secrets/S", UserID: "17841400000000001"}
+account, err := c.Check(ctx)                     // POST /account/check
+posted, err := c.Carousel(ctx, urls, caption)    // POST /publish/carousel
+```
+
+It uses the request and response types of package `publisher` and adds no
+dependencies. A failure is a `*client.Error` carrying the status and the
+`TokenError` and `OutcomeUnknown` flags; `client.ImageNotFetchable(err)`
+reports a 422.
+
 ## Where a token lives: secret references
 
 A token is never sent by value; it is a reference, `scheme:rest`:
@@ -119,6 +135,7 @@ decides who may call it.
 
 ```
 cmd/instagram-publisher/   main: which secret stores this build has
+client/                    a Go client for the service
 publisher/                 the HTTP service (service.go shared; carousel.go, refresh.go per route)
 secret/, secret/gcp/       references and stores
 internal/instagram/        the Instagram API client (Instagram Login, graph.instagram.com)
