@@ -44,19 +44,31 @@ type CarouselResponse struct {
 	PublishedAt time.Time `json:"published_at,omitzero"`
 }
 
-func (r CarouselRequest) validate() error {
-	if r.TokenRef == "" {
+// validateAccount checks the two fields every request names its account by.
+func validateAccount(tokenRef, userID string) error {
+	if tokenRef == "" {
 		return errors.New("token_ref is empty")
 	}
-	if !userIDPattern.MatchString(r.UserID) {
+	if !userIDPattern.MatchString(userID) {
 		return errors.New("user_id must be the account's numeric Instagram user id")
+	}
+	return nil
+}
+
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
+}
+
+func (r CarouselRequest) validate() error {
+	if err := validateAccount(r.TokenRef, r.UserID); err != nil {
+		return err
 	}
 	if n := len(r.Images); n == 0 || n > maxImages {
 		return fmt.Errorf("images: want 1 to %d URLs, got %d", maxImages, n)
 	}
 	for i, raw := range r.Images {
-		u, err := url.Parse(raw)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		if !isHTTPURL(raw) {
 			return fmt.Errorf("images[%d] is not an http(s) URL", i)
 		}
 	}
@@ -101,11 +113,7 @@ func (s *service) handleCarousel(w http.ResponseWriter, r *http.Request) {
 		failIG(w, fmt.Errorf("posting to Instagram: %w", err))
 		return
 	}
-	resp.MediaID = id
-	resp.PublishedAt = time.Now().UTC()
-	// The post is live from here on: a failed link lookup must not look like
-	// a failed post, or the caller would retry and post twice.
-	resp.Permalink, _ = ig.Permalink(ctx, id)
+	markPublished(ctx, ig, id, &resp)
 	writeJSON(w, resp)
 }
 

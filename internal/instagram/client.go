@@ -1,6 +1,6 @@
 // Package instagram is a small client for publishing through the Instagram
-// API with Instagram Login (graph.instagram.com): image and carousel posts,
-// container status polling, and long-lived token refresh.
+// API with Instagram Login (graph.instagram.com): image, carousel, reel and
+// story posts, container status polling, and long-lived token refresh.
 //
 // The access token travels in the request (query or form) as Instagram's
 // docs show. It is never put into an error message: transport errors are
@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,9 +30,11 @@ type Client struct {
 	Token   string
 	HTTP    *http.Client
 
-	// PollInterval and PollTimeout govern waiting for media containers.
-	PollInterval time.Duration
-	PollTimeout  time.Duration
+	// PollInterval and PollTimeout govern waiting for media containers;
+	// VideoPollTimeout is the longer wait a video container needs.
+	PollInterval     time.Duration
+	PollTimeout      time.Duration
+	VideoPollTimeout time.Duration
 }
 
 // New returns a client with sensible defaults.
@@ -43,6 +46,8 @@ func New(userID, token string) *Client {
 		HTTP:         &http.Client{Timeout: 60 * time.Second},
 		PollInterval: 3 * time.Second,
 		PollTimeout:  3 * time.Minute,
+
+		VideoPollTimeout: 10 * time.Minute,
 	}
 }
 
@@ -83,9 +88,9 @@ func (e *APIError) Hint() string {
 	case e.Code == 9 || e.Subcode == 2207042:
 		return "The account has reached its publishing limit (about 100 API posts per 24 hours)"
 	case e.Code == 9004 || e.Subcode == 2207052:
-		return "Instagram could not fetch an image: check that every slide URL is public and serves a JPEG"
+		return "Instagram could not fetch an image: check that every media URL is public and serves a JPEG (images) or an MP4/MOV (video)"
 	case e.Subcode == 2207026 || e.Subcode == 2207009:
-		return "The image format or aspect ratio is not accepted (JPEG, 4:5 to 1.91:1)"
+		return "The media format or aspect ratio is not accepted (images: JPEG, 4:5 to 1.91:1; reels and stories: MP4 or MOV with H.264 video and AAC audio, 9:16 recommended)"
 	case e.Code == 10 || e.Code == 200:
 		return "Permission missing: the token needs instagram_business_basic and instagram_business_content_publish"
 	}
@@ -243,7 +248,11 @@ func (c *Client) CreateCarousel(ctx context.Context, children []string, caption 
 
 // WaitReady polls a container until Instagram has processed it.
 func (c *Client) WaitReady(ctx context.Context, containerID string) error {
-	deadline := time.Now().Add(c.PollTimeout)
+	return c.waitReady(ctx, containerID, c.PollTimeout)
+}
+
+func (c *Client) waitReady(ctx context.Context, containerID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for {
 		var r struct {
 			StatusCode string `json:"status_code"`
@@ -259,7 +268,7 @@ func (c *Client) WaitReady(ctx context.Context, containerID string) error {
 			return fmt.Errorf("instagram: container %s %s: %s", containerID, strings.ToLower(r.StatusCode), r.Status)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("instagram: container %s still %s after %s", containerID, r.StatusCode, c.PollTimeout)
+			return fmt.Errorf("instagram: container %s still %s after %s", containerID, r.StatusCode, timeout)
 		}
 		select {
 		case <-ctx.Done():
@@ -362,4 +371,86 @@ func (c *Client) Post(ctx context.Context, imageURLs []string, caption string, p
 	}
 	say("carousel processed; publishing")
 	return c.publishFinal(ctx, parent)
+}
+
+// ReelOptions are the parts of a reel besides its video. The zero value posts
+// the video with no caption and leaves everything else to Instagram.
+type ReelOptions struct {
+	Caption string
+	// CoverURL is a public JPEG used as the cover. Without it Instagram takes
+	// a frame of the video.
+	CoverURL string
+	// ShareToFeed puts the reel on the profile grid as well as in the Reels
+	// tab. Nil sends nothing, so Instagram's own default applies.
+	ShareToFeed *bool
+	// ThumbOffsetMS picks the video frame (milliseconds from the start) used
+	// as the cover when there is no CoverURL. Nil sends nothing.
+	ThumbOffsetMS *int
+}
+
+// CreateReel makes a reel container for the video at videoURL.
+func (c *Client) CreateReel(ctx context.Context, videoURL string, o ReelOptions) (string, error) {
+	p := url.Values{"media_type": {"REELS"}, "video_url": {videoURL}}
+	if o.Caption != "" {
+		p.Set("caption", o.Caption)
+	}
+	if o.CoverURL != "" {
+		p.Set("cover_url", o.CoverURL)
+	}
+	if o.ShareToFeed != nil {
+		p.Set("share_to_feed", strconv.FormatBool(*o.ShareToFeed))
+	}
+	if o.ThumbOffsetMS != nil {
+		p.Set("thumb_offset", strconv.Itoa(*o.ThumbOffsetMS))
+	}
+	var r idResponse
+	if err := c.do(ctx, http.MethodPost, c.UserID+"/media", p, &r); err != nil {
+		return "", err
+	}
+	return r.ID, nil
+}
+
+// CreateStory makes a story container for an image or a video. Stories carry
+// no caption.
+func (c *Client) CreateStory(ctx context.Context, mediaURL string, video bool) (string, error) {
+	p := url.Values{"media_type": {"STORIES"}}
+	if video {
+		p.Set("video_url", mediaURL)
+	} else {
+		p.Set("image_url", mediaURL)
+	}
+	var r idResponse
+	if err := c.do(ctx, http.MethodPost, c.UserID+"/media", p, &r); err != nil {
+		return "", err
+	}
+	return r.ID, nil
+}
+
+// PostReel publishes a reel and returns the media id.
+func (c *Client) PostReel(ctx context.Context, videoURL string, o ReelOptions) (string, error) {
+	id, err := c.CreateReel(ctx, videoURL, o)
+	if err != nil {
+		return "", err
+	}
+	return c.publishWhenReady(ctx, id, c.VideoPollTimeout)
+}
+
+// PostStory publishes an image or a video as a story and returns the media id.
+func (c *Client) PostStory(ctx context.Context, mediaURL string, video bool) (string, error) {
+	id, err := c.CreateStory(ctx, mediaURL, video)
+	if err != nil {
+		return "", err
+	}
+	timeout := c.PollTimeout
+	if video {
+		timeout = c.VideoPollTimeout
+	}
+	return c.publishWhenReady(ctx, id, timeout)
+}
+
+func (c *Client) publishWhenReady(ctx context.Context, containerID string, timeout time.Duration) (string, error) {
+	if err := c.waitReady(ctx, containerID, timeout); err != nil {
+		return "", err
+	}
+	return c.publishFinal(ctx, containerID)
 }

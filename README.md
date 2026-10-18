@@ -1,16 +1,15 @@
 # instagram-publisher
 
 A small, stateless HTTP service that publishes to Instagram. A caller sends
-image URLs and a caption, says which account to post as and where that
+image or video URLs and a caption, says which account to post as and where that
 account's access token lives; the service posts and answers with the link.
 
 - **Only publishes.** No rendering, no scheduling, no content. Anything that
-  has images at public URLs can use it.
+  has images or videos at public URLs can use it.
 - **Holds no token and no state.** Every call names its token by reference
   (below); the value is read when needed.
-- **One route per kind of post.** Carousels today. Reels and stories would be
-  `POST /publish/reel` and `POST /publish/story`, each with its own request
-  and response, added without touching the others.
+- **One route per kind of post.** Carousels, reels and stories, each with its
+  own request and response, added without touching the others.
 - **Pluggable secret stores.** `env:` and `envfile:` are built in; Google
   Secret Manager is a separate package; another cloud is one more package.
 - **Small image.** A static binary on distroless, about 10 MB.
@@ -37,6 +36,31 @@ single image). Answers `{account, media_id, permalink, published_at}`. With
 `dry_run` it stops before posting and posts nothing. `POST /publish` is the
 same route, kept for older callers.
 
+### `POST /publish/reel`
+
+```json
+{"token_ref": "...", "user_id": "17841400000000001",
+ "video": "https://.../reel.mp4", "caption": "...",
+ "share_to_feed": true, "cover": "https://.../cover.jpg",
+ "dry_run": false}
+```
+
+Posts a reel from a video (MP4 or MOV, served as `video/mp4` or
+`video/quicktime`). Optional: `share_to_feed` (also show on the profile grid;
+left out, Instagram's default), `cover` (a public JPEG) or `thumb_offset_ms`
+(which video frame is the cover, in ms; not together with `cover`). Same answer
+as the carousel. Video takes longer to process, so the wait is up to 10 minutes.
+
+### `POST /publish/story`
+
+```json
+{"token_ref": "...", "user_id": "17841400000000001",
+ "image": "https://.../story.jpg", "dry_run": false}
+```
+
+Posts a story from exactly one of `image` (JPEG) or `video` (MP4/MOV). Stories
+take no caption. Same answer as the carousel.
+
 ### `POST /account/check`
 
 `{"token_ref": "...", "user_id": "..."}` checks the token works and belongs to
@@ -54,8 +78,8 @@ schedule.
 
 ### Errors
 
-Bad input answers 400; a token for another account 409; an image that isn't
-fetchable 422. A failure of Instagram or of the secret store answers 502 with
+Bad input answers 400; a token for another account 409; an image, video or cover
+that isn't fetchable 422. A failure of Instagram or of the secret store answers 502 with
 `"token_error": true` when the token itself was refused (needs a person, not a
 retry) and `"outcome_unknown": true` when the post may have gone out although
 Instagram did not answer: **do not retry before looking at the account.**
@@ -69,6 +93,8 @@ c := &client.Client{BaseURL: "http://localhost:8080",
     TokenRef: "gcp:projects/P/secrets/S", UserID: "17841400000000001"}
 account, err := c.Check(ctx)                     // POST /account/check
 posted, err := c.Carousel(ctx, urls, caption)    // POST /publish/carousel
+reel, err := c.Reel(ctx, videoURL, client.ReelOptions{Caption: caption}) // POST /publish/reel
+story, err := c.StoryImage(ctx, imageURL)         // POST /publish/story (StoryVideo for a video)
 ```
 
 It uses the request and response types of package `publisher` and adds no
@@ -136,7 +162,7 @@ decides who may call it.
 ```
 cmd/instagram-publisher/   main: which secret stores this build has
 client/                    a Go client for the service
-publisher/                 the HTTP service (service.go shared; carousel.go, refresh.go per route)
+publisher/                 the HTTP service (service.go shared; carousel.go, reel.go, story.go, refresh.go per route)
 secret/, secret/gcp/       references and stores
 internal/instagram/        the Instagram API client (Instagram Login, graph.instagram.com)
 internal/imagecheck/       is a URL a fetchable JPEG

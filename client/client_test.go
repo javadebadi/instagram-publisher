@@ -101,3 +101,44 @@ func TestUnreachable(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+func TestReelAndStoryCallsSendWhatTheyShould(t *testing.T) {
+	var reel publisher.ReelRequest
+	var story publisher.StoryRequest
+	c := fake(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/publish/reel":
+			json.NewDecoder(r.Body).Decode(&reel)
+		case "/publish/story":
+			story = publisher.StoryRequest{}
+			json.NewDecoder(r.Body).Decode(&story)
+		default:
+			t.Errorf("path %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"account":"a","media_id":"m1","permalink":"https://www.instagram.com/p/X/"}`))
+	}))
+	ctx := context.Background()
+
+	feed, off := true, 800
+	p, err := c.Reel(ctx, "https://x/r.mp4", ReelOptions{Caption: "Hi", ShareToFeed: &feed, ThumbOffsetMS: &off})
+	if err != nil || p.MediaID != "m1" {
+		t.Fatalf("got %+v, %v", p, err)
+	}
+	if reel.TokenRef != "env:T" || reel.UserID != "17841400000000001" || reel.Video != "https://x/r.mp4" || reel.Caption != "Hi" ||
+		reel.ShareToFeed == nil || !*reel.ShareToFeed || reel.ThumbOffsetMS == nil || *reel.ThumbOffsetMS != 800 || reel.Cover != "" {
+		t.Errorf("reel body: %+v", reel)
+	}
+
+	if _, err := c.StoryImage(ctx, "https://x/s.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if story.TokenRef != "env:T" || story.Image != "https://x/s.jpg" || story.Video != "" {
+		t.Errorf("image story body: %+v", story)
+	}
+	if _, err := c.StoryVideo(ctx, "https://x/s.mp4"); err != nil {
+		t.Fatal(err)
+	}
+	if story.Video != "https://x/s.mp4" || story.Image != "" {
+		t.Errorf("video story body: %+v", story)
+	}
+}

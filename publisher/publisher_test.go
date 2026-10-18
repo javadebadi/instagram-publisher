@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 type fakeInstagram struct {
 	mu       sync.Mutex
 	calls    []string
+	forms    []url.Values // the body of every POST to .../media
 	userID   string
 	username string
 	failMe   bool
@@ -26,8 +28,12 @@ type fakeInstagram struct {
 }
 
 func (f *fakeInstagram) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
 	f.mu.Lock()
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media") {
+		f.forms = append(f.forms, r.PostForm)
+	}
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	switch {
@@ -80,6 +86,15 @@ func slideHost(t *testing.T) *httptest.Server {
 		}
 		if r.Method == http.MethodHead {
 			w.WriteHeader(403)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, ".mp4") {
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Write([]byte("mp4"))
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, ".txt") {
+			w.Header().Set("Content-Type", "text/plain")
 			return
 		}
 		w.Header().Set("Content-Type", "image/jpeg")
@@ -276,8 +291,8 @@ func TestPublishKeepsTheOldRoute(t *testing.T) {
 func TestUnknownKindIsNotFound(t *testing.T) {
 	ig := &fakeInstagram{userID: "17841400000000001"}
 	h, ref := publisher(t, ig)
-	if rec := doJSON(h, "/publish/reel", CarouselRequest{TokenRef: ref}); rec.Code != http.StatusNotFound {
-		t.Errorf("status %d, want 404 until reels exist", rec.Code)
+	if rec := doJSON(h, "/publish/highlight", CarouselRequest{TokenRef: ref}); rec.Code != http.StatusNotFound {
+		t.Errorf("status %d, want 404 for a kind that does not exist", rec.Code)
 	}
 }
 
@@ -298,5 +313,185 @@ func TestAccountCheck(t *testing.T) {
 	}
 	if rec := doJSON(h, "/account/check", AccountRequest{TokenRef: ref, UserID: "abc"}); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad user id: status %d, want 400", rec.Code)
+	}
+}
+
+func TestReelPostsAVideoWithItsOptions(t *testing.T) {
+	ig := &fakeInstagram{userID: "17841400000000001", username: "acct"}
+	h, ref := publisher(t, ig)
+	host := slideHost(t)
+	feed := false
+	rec := doJSON(h, "/publish/reel", ReelRequest{
+		TokenRef: ref, UserID: ig.userID, Caption: "hello", Video: host.URL + "/r.mp4?sig=secret",
+		ShareToFeed: &feed, Cover: host.URL + "/cover.jpg",
+	})
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var resp ReelResponse
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp.MediaID != "media99" || resp.Permalink == "" || resp.Account != "acct" {
+		t.Errorf("unexpected answer: %+v", resp)
+	}
+	if len(ig.forms) != 1 {
+		t.Fatalf("want one container, got %v", ig.forms)
+	}
+	f := ig.forms[0]
+	if f.Get("media_type") != "REELS" || f.Get("video_url") != host.URL+"/r.mp4?sig=secret" || f.Get("caption") != "hello" ||
+		f.Get("share_to_feed") != "false" || f.Get("cover_url") != host.URL+"/cover.jpg" || f.Has("thumb_offset") {
+		t.Errorf("container form: %v", f)
+	}
+}
+
+func TestReelSendsNothingForOptionsLeftOut(t *testing.T) {
+	ig := &fakeInstagram{userID: "17841400000000001", username: "acct"}
+	h, ref := publisher(t, ig)
+	host := slideHost(t)
+	off := 2500
+	rec := doJSON(h, "/publish/reel", ReelRequest{TokenRef: ref, UserID: ig.userID, Video: host.URL + "/r.mp4", ThumbOffsetMS: &off})
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	f := ig.forms[0]
+	if f.Get("thumb_offset") != "2500" || f.Has("share_to_feed") || f.Has("cover_url") || f.Has("caption") {
+		t.Errorf("container form: %v", f)
+	}
+}
+
+func TestReelDryRunChecksTheVideoAndPostsNothing(t *testing.T) {
+	ig := &fakeInstagram{userID: "17841400000000001", username: "acct"}
+	h, ref := publisher(t, ig)
+	host := slideHost(t)
+	rec := doJSON(h, "/publish/reel", ReelRequest{TokenRef: ref, UserID: ig.userID, DryRun: true, Video: host.URL + "/r.mp4"})
+	var resp ReelResponse
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if rec.Code != 200 || !resp.DryRun || resp.MediaID != "" {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if ig.posted() {
+		t.Errorf("a dry run called the posting endpoints: %v", ig.calls)
+	}
+	// A JPEG is not a video, and a missing cover is caught too.
+	for name, req := range map[string]ReelRequest{
+		"video is an image": {Video: host.URL + "/1.jpg"},
+		"video is text":     {Video: host.URL + "/note.txt"},
+		"missing cover":     {Video: host.URL + "/r.mp4", Cover: host.URL + "/missing.jpg"},
+	} {
+		req.TokenRef, req.UserID, req.DryRun = ref, ig.userID, true
+		if rec := doJSON(h, "/publish/reel", req); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: status %d, want 422 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestReelRejectsBadRequests(t *testing.T) {
+	ig := &fakeInstagram{userID: "17841400000000001"}
+	h, ref := publisher(t, ig)
+	neg, off := -1, 1000
+	ok := ReelRequest{TokenRef: ref, UserID: "17841400000000001", Video: "https://x.example/r.mp4"}
+	for name, mutate := range map[string]func(*ReelRequest){
+		"no token ref":     func(r *ReelRequest) { r.TokenRef = "" },
+		"bad user id":      func(r *ReelRequest) { r.UserID = "abc" },
+		"no video":         func(r *ReelRequest) { r.Video = "" },
+		"not a url":        func(r *ReelRequest) { r.Video = "file:///etc/passwd" },
+		"cover not a url":  func(r *ReelRequest) { r.Cover = "nope" },
+		"negative offset":  func(r *ReelRequest) { r.ThumbOffsetMS = &neg },
+		"cover and offset": func(r *ReelRequest) { r.Cover, r.ThumbOffsetMS = "https://x.example/c.jpg", &off },
+		"caption too long": func(r *ReelRequest) { r.Caption = strings.Repeat("x", 2201) },
+	} {
+		req := ok
+		mutate(&req)
+		if rec := doJSON(h, "/publish/reel", req); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+	if ig.posted() {
+		t.Error("a bad request reached Instagram")
+	}
+}
+
+func TestReelSaysWhenTheOutcomeIsUnknown(t *testing.T) {
+	ig := &fakeInstagram{userID: "17841400000000001", username: "acct", dropPublish: true}
+	h, ref := publisher(t, ig)
+	host := slideHost(t)
+	rec := doJSON(h, "/publish/reel", ReelRequest{TokenRef: ref, UserID: ig.userID, Video: host.URL + "/r.mp4"})
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != http.StatusBadGateway || body["outcome_unknown"] != true {
+		t.Errorf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestStoryPostsAnImageOrAVideo(t *testing.T) {
+	for name, tc := range map[string]struct {
+		req  func(host string) StoryRequest
+		want string // the container field the media URL must be in
+	}{
+		"image": {func(h string) StoryRequest { return StoryRequest{Image: h + "/s.jpg"} }, "image_url"},
+		"video": {func(h string) StoryRequest { return StoryRequest{Video: h + "/s.mp4"} }, "video_url"},
+	} {
+		ig := &fakeInstagram{userID: "17841400000000001", username: "acct"}
+		h, ref := publisher(t, ig)
+		host := slideHost(t)
+		req := tc.req(host.URL)
+		req.TokenRef, req.UserID = ref, ig.userID
+		rec := doJSON(h, "/publish/story", req)
+		if rec.Code != 200 {
+			t.Fatalf("%s: status %d: %s", name, rec.Code, rec.Body)
+		}
+		var resp StoryResponse
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp.MediaID != "media99" || resp.Permalink == "" {
+			t.Errorf("%s: unexpected answer: %+v", name, resp)
+		}
+		f := ig.forms[0]
+		if f.Get("media_type") != "STORIES" || f.Get(tc.want) == "" || f.Has("caption") {
+			t.Errorf("%s: container form: %v", name, f)
+		}
+	}
+}
+
+func TestStoryRejectsBadRequestsAndWrongMedia(t *testing.T) {
+	ig := &fakeInstagram{userID: "17841400000000001", username: "acct"}
+	h, ref := publisher(t, ig)
+	host := slideHost(t)
+	for name, req := range map[string]StoryRequest{
+		"nothing":     {},
+		"both":        {Image: host.URL + "/s.jpg", Video: host.URL + "/s.mp4"},
+		"not a url":   {Image: "nope"},
+		"bad user id": {Image: host.URL + "/s.jpg", UserID: "abc"},
+	} {
+		req.TokenRef = ref
+		if req.UserID == "" {
+			req.UserID = ig.userID
+		}
+		if rec := doJSON(h, "/publish/story", req); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+	// A video given as an image (and the other way round) is caught before posting.
+	for name, req := range map[string]StoryRequest{
+		"mp4 as image":  {Image: host.URL + "/s.mp4"},
+		"jpeg as video": {Video: host.URL + "/s.jpg"},
+	} {
+		req.TokenRef, req.UserID = ref, ig.userID
+		if rec := doJSON(h, "/publish/story", req); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: status %d, want 422 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+	if ig.posted() {
+		t.Error("a bad request reached Instagram")
+	}
+}
+
+func TestStoryDryRunPostsNothing(t *testing.T) {
+	ig := &fakeInstagram{userID: "17841400000000001", username: "acct"}
+	h, ref := publisher(t, ig)
+	host := slideHost(t)
+	rec := doJSON(h, "/publish/story", StoryRequest{TokenRef: ref, UserID: ig.userID, DryRun: true, Image: host.URL + "/s.jpg"})
+	var resp StoryResponse
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if rec.Code != 200 || !resp.DryRun || ig.posted() {
+		t.Fatalf("status %d: %s; calls %v", rec.Code, rec.Body, ig.calls)
 	}
 }

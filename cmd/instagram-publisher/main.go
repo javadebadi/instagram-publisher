@@ -1,6 +1,7 @@
 // Command instagram-publisher runs the Instagram publisher service: POST
-// /publish/carousel posts a carousel from image URLs, POST /token/refresh
-// keeps the account's long-lived token fresh. See package publisher.
+// /publish/carousel, /publish/reel and /publish/story post from media URLs,
+// POST /token/refresh keeps the account's long-lived token fresh. See package
+// publisher.
 //
 // Which secret stores a token can be read from is decided here, by what this
 // file registers: env: and envfile: always, gcp: (Google Secret Manager) as

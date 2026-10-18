@@ -25,7 +25,8 @@ type Client struct {
 	TokenRef string // where the service finds the account's token
 	UserID   string // the account the token must belong to
 	// HTTP is the client requests go through. Default: one without an
-	// overall timeout, because posting a carousel legitimately takes minutes;
+	// overall timeout, because posting a carousel or a video legitimately takes
+	// minutes;
 	// the context is what ends the wait.
 	HTTP *http.Client
 }
@@ -49,8 +50,9 @@ func (e *Error) Error() string {
 	return msg
 }
 
-// ImageNotFetchable reports whether the service could not fetch an image
-// URL, which usually means the images are uploaded but not live yet.
+// ImageNotFetchable reports whether the service could not use a media URL
+// (an image, a video or a cover), which usually means the files are uploaded
+// but not live yet.
 func ImageNotFetchable(err error) bool {
 	var e *Error
 	return errors.As(err, &e) && e.Status == http.StatusUnprocessableEntity
@@ -72,6 +74,51 @@ func (c *Client) Carousel(ctx context.Context, images []string, caption string) 
 		TokenRef: c.TokenRef, UserID: c.UserID, Images: images, Caption: caption,
 	}, &out)
 	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ReelOptions are the optional parts of a reel; the zero value posts the video
+// with no caption and leaves the rest to Instagram.
+type ReelOptions struct {
+	Caption string
+	// Cover is a public JPEG used as the cover (else a frame of the video).
+	Cover string
+	// ShareToFeed also shows the reel on the profile grid; nil leaves
+	// Instagram's default.
+	ShareToFeed *bool
+	// ThumbOffsetMS picks the cover frame, in milliseconds; not with Cover.
+	ThumbOffsetMS *int
+}
+
+// Reel posts the video (an MP4 or MOV already at a public URL) as a reel.
+func (c *Client) Reel(ctx context.Context, video string, o ReelOptions) (*publisher.ReelResponse, error) {
+	var out publisher.ReelResponse
+	err := c.post(ctx, "/publish/reel", publisher.ReelRequest{
+		TokenRef: c.TokenRef, UserID: c.UserID, Video: video, Caption: o.Caption,
+		Cover: o.Cover, ShareToFeed: o.ShareToFeed, ThumbOffsetMS: o.ThumbOffsetMS,
+	}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// StoryImage posts a JPEG (already at a public URL) as a story.
+func (c *Client) StoryImage(ctx context.Context, image string) (*publisher.StoryResponse, error) {
+	return c.story(ctx, publisher.StoryRequest{Image: image})
+}
+
+// StoryVideo posts an MP4 or MOV (already at a public URL) as a story.
+func (c *Client) StoryVideo(ctx context.Context, video string) (*publisher.StoryResponse, error) {
+	return c.story(ctx, publisher.StoryRequest{Video: video})
+}
+
+func (c *Client) story(ctx context.Context, req publisher.StoryRequest) (*publisher.StoryResponse, error) {
+	req.TokenRef, req.UserID = c.TokenRef, c.UserID
+	var out publisher.StoryResponse
+	if err := c.post(ctx, "/publish/story", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

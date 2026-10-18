@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -234,5 +235,76 @@ func TestTheSpamRestrictionOnThePublishCallIsAnUnknownOutcome(t *testing.T) {
 	_, err = testClient(rate).Post(context.Background(), []string{"https://x/1.jpg"}, "c", nil)
 	if err == nil || IsOutcomeUnknown(err) {
 		t.Fatalf("a plain rate limit is a definite failure, got %v", err)
+	}
+}
+
+// A reel and a story are one container each, polled with the longer video
+// timeout, then published; options left out are not sent.
+func TestPostReelAndStory(t *testing.T) {
+	var forms []url.Values
+	var published []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/media"):
+			forms = append(forms, r.PostForm)
+			fmt.Fprintf(w, `{"id":"c%d"}`, len(forms))
+		case strings.HasSuffix(r.URL.Path, "/media_publish"):
+			published = append(published, r.PostForm.Get("creation_id"))
+			fmt.Fprint(w, `{"id":"m1"}`)
+		default:
+			fmt.Fprint(w, `{"status_code":"FINISHED"}`)
+		}
+	}))
+	defer ts.Close()
+	c := testClient(ts)
+	ctx := context.Background()
+
+	on, off := true, 1500
+	if id, err := c.PostReel(ctx, "https://x/r.mp4", ReelOptions{Caption: "hi", ShareToFeed: &on, ThumbOffsetMS: &off}); err != nil || id != "m1" {
+		t.Fatalf("reel: %q, %v", id, err)
+	}
+	r := forms[0]
+	if r.Get("media_type") != "REELS" || r.Get("video_url") != "https://x/r.mp4" || r.Get("caption") != "hi" ||
+		r.Get("share_to_feed") != "true" || r.Get("thumb_offset") != "1500" || r.Has("cover_url") {
+		t.Errorf("reel form: %v", r)
+	}
+
+	if _, err := c.PostStory(ctx, "https://x/s.jpg", false); err != nil {
+		t.Fatal(err)
+	}
+	if s := forms[1]; s.Get("media_type") != "STORIES" || s.Get("image_url") != "https://x/s.jpg" || s.Has("video_url") || s.Has("caption") {
+		t.Errorf("image story form: %v", s)
+	}
+	if _, err := c.PostStory(ctx, "https://x/s.mp4", true); err != nil {
+		t.Fatal(err)
+	}
+	if s := forms[2]; s.Get("video_url") != "https://x/s.mp4" || s.Has("image_url") {
+		t.Errorf("video story form: %v", s)
+	}
+	if strings.Join(published, ",") != "c1,c2,c3" {
+		t.Errorf("published %v", published)
+	}
+}
+
+func TestVideoContainersGetTheLongerTimeout(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			fmt.Fprint(w, `{"id":"c1"}`)
+			return
+		}
+		fmt.Fprint(w, `{"status_code":"IN_PROGRESS"}`)
+	}))
+	defer ts.Close()
+	c := testClient(ts)
+	c.PollTimeout, c.VideoPollTimeout = time.Millisecond, 100*time.Millisecond
+
+	start := time.Now()
+	_, err := c.PostReel(context.Background(), "https://x/r.mp4", ReelOptions{})
+	if err == nil || !strings.Contains(err.Error(), "still IN_PROGRESS") {
+		t.Fatalf("want a timeout, got %v", err)
+	}
+	if time.Since(start) < 90*time.Millisecond {
+		t.Errorf("gave up after %s: the video timeout was not used", time.Since(start))
 	}
 }

@@ -57,3 +57,6 @@ caller's job. The pattern that works:
 
 The [Python example](examples/python.md) does exactly this with a small record
 file.
+
+Reels and stories work the same way: see [Posting reels and
+stories](07-reels-and-stories.md).

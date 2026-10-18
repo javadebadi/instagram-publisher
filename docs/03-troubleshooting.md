@@ -2,7 +2,7 @@
 layout: default
 title: When something goes wrong
 render_with_liquid: false
-nav_order: 4
+nav_order: 5
 ---
 
 # 3. When something goes wrong
@@ -12,9 +12,9 @@ problem it is.
 
 | Status | Meaning | What to do |
 |---|---|---|
-| `400` | The request is wrong: no `token_ref`, a `user_id` that is not a number, no images or more than 10, an address that is not `http(s)`, a caption over 2200 characters | Fix the request; the message names the field. |
+| `400` | The request is wrong: no `token_ref`, a `user_id` that is not a number, no images or more than 10, an address that is not `http(s)`, a caption over 2200 characters; for [reels and stories](07-reels-and-stories.md): no `video`, a story with both or neither of `image` and `video`, `cover` together with `thumb_offset_ms` | Fix the request; the message names the field. |
 | `409` | The token works but belongs to another account than `user_id` | You are pointing at the wrong token or the wrong id. Nothing was posted. |
-| `422` | An image address could not be used: not reachable, not `200`, or not `image/jpeg` | Make the file public and served as JPEG. If the files are on a host that publishes on a delay (a synced folder), wait for it. Nothing was posted. |
+| `422` | An image, video or cover address could not be used: not reachable, not `200`, or the wrong type (`image/jpeg` for images and covers, `video/mp4` or `video/quicktime` for videos) | Make the file public and served with the right type. If the files are on a host that publishes on a delay (a synced folder), wait for it. Nothing was posted. |
 | `502` | Instagram, or the place the token lives, failed | Read the two flags below. |
 
 ## The two flags on a 502

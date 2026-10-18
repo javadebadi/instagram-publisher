@@ -9,9 +9,8 @@
 // which secret stores the program registers.
 //
 // Each kind of post is its own route with its own request and response:
-// POST /publish/carousel today; reels and stories would be
-// POST /publish/reel and POST /publish/story, added without touching the
-// others. What the kinds share (reading the token, checking it belongs to the
+// POST /publish/carousel, POST /publish/reel and POST /publish/story. A new
+// kind is a new route added without touching the others. What the kinds share (reading the token, checking it belongs to the
 // account, mapping Instagram's failures to answers) lives in this file.
 //
 // There is no authentication here: run the service where something else
@@ -50,6 +49,8 @@ type service struct{ cfg Config }
 //
 //	GET  /health
 //	POST /publish/carousel   post a carousel (or a single image)
+//	POST /publish/reel       post a reel from a video
+//	POST /publish/story      post a story from an image or a video
 //	POST /publish            the same, kept for callers from before kinds had routes
 //	POST /account/check      check a token works and belongs to the account
 //	POST /token/refresh      refresh the account's long-lived token
@@ -63,6 +64,8 @@ func New(cfg Config) http.Handler {
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("POST /publish/carousel", s.handleCarousel)
+	mux.HandleFunc("POST /publish/reel", s.handleReel)
+	mux.HandleFunc("POST /publish/story", s.handleStory)
 	mux.HandleFunc("POST /publish", s.handleCarousel)
 	mux.HandleFunc("POST /account/check", s.handleAccount)
 	mux.HandleFunc("POST /token/refresh", s.handleRefresh)

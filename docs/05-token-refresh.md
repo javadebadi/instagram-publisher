@@ -2,7 +2,7 @@
 layout: default
 title: Keeping the token fresh
 render_with_liquid: false
-nav_order: 6
+nav_order: 7
 ---
 
 # 5. Keeping the token fresh

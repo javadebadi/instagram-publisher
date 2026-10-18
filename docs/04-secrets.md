@@ -2,7 +2,7 @@
 layout: default
 title: Where tokens live
 render_with_liquid: false
-nav_order: 5
+nav_order: 6
 ---
 
 # 4. Where tokens live

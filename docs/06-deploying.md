@@ -2,7 +2,7 @@
 layout: default
 title: Deploying it
 render_with_liquid: false
-nav_order: 7
+nav_order: 8
 ---
 
 # 6. Deploying it
