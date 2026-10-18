@@ -92,13 +92,13 @@ sent back.
 ```sh
 curl -s localhost:8080/publish/story -d '{
   "token_ref": "gcp:projects/MY_PROJECT/secrets/MY_TOKEN",
-  "user_id": "17841459002481489",
-  "image": "https://static.example.com/stories/coming-soon.jpg"
+  "user_id": "17841400000000001",
+  "image": "https://example.com/stories/coming-soon.jpg"
 }'
 ```
 
 ```json
-{"dry_run":false,"account":"humanknowledgegraph","media_id":"1795...","permalink":"https://www.instagram.com/stories/humanknowledgegraph/4010...","published_at":"2026-10-18T07:57:25Z"}
+{"dry_run":false,"account":"yourname","media_id":"1795...","permalink":"https://www.instagram.com/stories/yourname/4010...","published_at":"2026-10-18T07:57:25Z"}
 ```
 
 It returned within seconds. A story's `permalink` has the form
@@ -110,15 +110,15 @@ tab (`share_to_feed: false`):
 ```sh
 curl -s -m 700 localhost:8080/publish/reel -d '{
   "token_ref": "gcp:projects/MY_PROJECT/secrets/MY_TOKEN",
-  "user_id": "17841459002481489",
-  "video": "https://static.example.com/reels/kubernetes-pods-basics.mp4",
-  "caption": "Kubernetes pods, the basics",
+  "user_id": "17841400000000001",
+  "video": "https://example.com/reels/intro.mp4",
+  "caption": "A short intro",
   "share_to_feed": false
 }'
 ```
 
 ```json
-{"dry_run":false,"account":"humanknowledgegraph","media_id":"1809...","permalink":"https://www.instagram.com/reel/DeoNTU_ICci/","published_at":"2026-10-18T08:04:07Z"}
+{"dry_run":false,"account":"yourname","media_id":"1809...","permalink":"https://www.instagram.com/reel/AbC123xyz/","published_at":"2026-10-18T08:04:07Z"}
 ```
 
 This call took **several minutes**, because Instagram processes the video
