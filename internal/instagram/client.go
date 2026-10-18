@@ -23,6 +23,9 @@ import (
 // DefaultBaseURL is the API root this client was written against.
 const DefaultBaseURL = "https://graph.instagram.com/v23.0"
 
+// DefaultVideoPollTimeout is how long a video container may take to process.
+const DefaultVideoPollTimeout = 10 * time.Minute
+
 // Client calls the API as one Instagram professional account.
 type Client struct {
 	BaseURL string
@@ -31,7 +34,8 @@ type Client struct {
 	HTTP    *http.Client
 
 	// PollInterval and PollTimeout govern waiting for media containers;
-	// VideoPollTimeout is the longer wait a video container needs.
+	// VideoPollTimeout is the longer wait a video container needs (zero means
+	// DefaultVideoPollTimeout, so a Client built by hand keeps working).
 	PollInterval     time.Duration
 	PollTimeout      time.Duration
 	VideoPollTimeout time.Duration
@@ -47,7 +51,7 @@ func New(userID, token string) *Client {
 		PollInterval: 3 * time.Second,
 		PollTimeout:  3 * time.Minute,
 
-		VideoPollTimeout: 10 * time.Minute,
+		VideoPollTimeout: DefaultVideoPollTimeout,
 	}
 }
 
@@ -432,7 +436,7 @@ func (c *Client) PostReel(ctx context.Context, videoURL string, o ReelOptions) (
 	if err != nil {
 		return "", err
 	}
-	return c.publishWhenReady(ctx, id, c.VideoPollTimeout)
+	return c.publishWhenReady(ctx, id, c.videoTimeout())
 }
 
 // PostStory publishes an image or a video as a story and returns the media id.
@@ -443,9 +447,16 @@ func (c *Client) PostStory(ctx context.Context, mediaURL string, video bool) (st
 	}
 	timeout := c.PollTimeout
 	if video {
-		timeout = c.VideoPollTimeout
+		timeout = c.videoTimeout()
 	}
 	return c.publishWhenReady(ctx, id, timeout)
+}
+
+func (c *Client) videoTimeout() time.Duration {
+	if c.VideoPollTimeout > 0 {
+		return c.VideoPollTimeout
+	}
+	return DefaultVideoPollTimeout
 }
 
 func (c *Client) publishWhenReady(ctx context.Context, containerID string, timeout time.Duration) (string, error) {

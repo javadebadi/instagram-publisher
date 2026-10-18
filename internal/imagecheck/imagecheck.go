@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// userAgent names this service to the hosts it probes: some (Wikimedia, for
+// one) refuse Go's default agent.
+const userAgent = "instagram-publisher (+https://github.com/javadebadi/instagram-publisher)"
+
 // HTTPClient fetches the URLs; tests swap it.
 var HTTPClient = http.DefaultClient
 
@@ -54,6 +58,7 @@ func probe(ctx context.Context, method, url string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", userAgent)
 	if method == http.MethodGet {
 		req.Header.Set("Range", "bytes=0-0")
 	}

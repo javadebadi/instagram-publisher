@@ -82,6 +82,67 @@ refused with `422` before anything is posted. A story disappears from the
 profile after 24 hours, but a second request is still a second story, so the
 same care about double-posting applies.
 
+## What it looked like for real
+
+These are posts made with this service to a real account, with the answers it
+sent back.
+
+**A story from an image.** A 1080x1920 JPEG (9:16) on a public static host:
+
+```sh
+curl -s localhost:8080/publish/story -d '{
+  "token_ref": "gcp:projects/MY_PROJECT/secrets/MY_TOKEN",
+  "user_id": "17841459002481489",
+  "image": "https://static.example.com/stories/coming-soon.jpg"
+}'
+```
+
+```json
+{"dry_run":false,"account":"humanknowledgegraph","media_id":"1795...","permalink":"https://www.instagram.com/stories/humanknowledgegraph/4010...","published_at":"2026-10-18T07:57:25Z"}
+```
+
+It returned within seconds. A story's `permalink` has the form
+`/stories/<username>/<id>`, a reel's is `/reel/<code>/`.
+
+**A reel from a long video.** A 4 minute, 19 MB MP4, shown only in the Reels
+tab (`share_to_feed: false`):
+
+```sh
+curl -s -m 700 localhost:8080/publish/reel -d '{
+  "token_ref": "gcp:projects/MY_PROJECT/secrets/MY_TOKEN",
+  "user_id": "17841459002481489",
+  "video": "https://static.example.com/reels/kubernetes-pods-basics.mp4",
+  "caption": "Kubernetes pods, the basics",
+  "share_to_feed": false
+}'
+```
+
+```json
+{"dry_run":false,"account":"humanknowledgegraph","media_id":"1809...","permalink":"https://www.instagram.com/reel/DeoNTU_ICci/","published_at":"2026-10-18T08:04:07Z"}
+```
+
+This call took **several minutes**, because Instagram processes the video
+before it will publish it. The service waits for it; your caller must too (the
+`-m 700` above is curl's own limit). A caller that gives up early may leave the
+reel still being made, and it can still go out: check the account before trying
+again.
+
+## Lessons from those first real posts
+
+- **Run a dry run first, with the real files.** It checks the token, the
+  account and that every address can be fetched, and posts nothing. Do it before
+  the first real post of a new kind, and after changing where the files live.
+- **Hosts that refuse unknown programs.** Wikimedia Commons answers `403` to
+  clients that do not name themselves. The service names itself in the checks
+  it makes, so a Commons picture works as a story `image`.
+- **Where the files live is up to you.** Any public `http(s)` address works.
+  A bucket that blocks all public access (for example Google Cloud Storage with
+  "public access prevention" enforced) cannot serve them to Instagram: use a
+  public static host, or a signed URL.
+- **A reel cannot be taken back through the API.** Delete it in the Instagram
+  app, and keep a record of `media_id` and `permalink` straight away, as for
+  every post.
+
 ## From Go
 
 The [`client` package](https://github.com/javadebadi/instagram-publisher#from-go-package-client)

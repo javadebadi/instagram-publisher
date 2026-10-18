@@ -308,3 +308,12 @@ func TestVideoContainersGetTheLongerTimeout(t *testing.T) {
 		t.Errorf("gave up after %s: the video timeout was not used", time.Since(start))
 	}
 }
+
+// A Client built by hand, without New, has no VideoPollTimeout: videos must
+// still get the default wait, not none.
+func TestAHandBuiltClientStillWaitsForVideo(t *testing.T) {
+	c := &Client{VideoPollTimeout: 0}
+	if c.videoTimeout() != DefaultVideoPollTimeout {
+		t.Errorf("zero value gave %s", c.videoTimeout())
+	}
+}
